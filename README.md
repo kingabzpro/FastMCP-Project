@@ -129,7 +129,7 @@ To use your local MCP server in Cursor, configure the MCP endpoint in your Curso
 
 Now, Cursor will route MCP requests to your local server. You can add more endpoints by adding more keys to the JSON if needed.
 
-![Cursor MCP](image.png)
+![Cursor MCP](image-1.png)
 
 
 
