@@ -4,103 +4,65 @@ from fastmcp import FastMCP
 from tavily import TavilyClient
 
 # --- Configuration ---
-# Load your Tavily API key from an environment variable
 TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY")
 if not TAVILY_API_KEY:
     raise ValueError("Please set the TAVILY_API_KEY environment variable.")
 
-# Initialize the Tavily client [[1]]
 tavily = TavilyClient(api_key=TAVILY_API_KEY)
-
-# Initialize the FastMCP server instance
-mcp = FastMCP(name="AIResearchAssistant")
-
-print(f"✅ AI Research Assistant server initialized.")
+mcp = FastMCP(name="ArxivExplorer")
+print("✅ ArxivExplorer server initialized.")
 
 
-@mcp.resource("resource://research/daily_topics")
-def get_daily_research_topics() -> List[str]:
-    """Provides a dynamic list of suggested topics for daily research."""
+# --- Dynamic Resource: Suggested AI research topics ---
+@mcp.resource("resource://ai/arxiv_topics")
+def arxiv_topics() -> List[str]:
     return [
-        "Latest breakthroughs in quantum computing",
-        "Economic impact of renewable energy adoption",
-        "Key takeaways from the most recent G7 summit",
-        "Advancements in mRNA vaccine technology",
+        "Transformer interpretability",
+        "Efficient large-scale model training",
+        "Federated learning privacy",
+        "Neural network pruning",
     ]
 
 
-print("✅ Resource 'resource://research/daily_topics' registered.")
+print("✅ Resource 'resource://ai/arxiv_topics' registered.")
 
-@mcp.tool(annotations={"title": "Perform Web Search"})
-def web_search(query: str, max_results: int = 3) -> List[Dict]:
+
+# --- Tool: Search ArXiv for recent papers ---
+@mcp.tool(annotations={"title": "Search Arxiv"})
+def search_arxiv(query: str, max_results: int = 5) -> List[Dict]:
     """
-    Performs a general web search for a given query and returns a list of results.
-
-    Args:
-        query: The search query.
-        max_results: The maximum number of results to return.
+    Queries ArXiv via Tavily, returning title + link for each paper.
     """
-    try:
-        response = tavily.search(query=query, max_results=max_results)
-        return [
-            {"title": r["title"], "url": r["url"], "content": r["content"]}
-            for r in response.get("results", [])
-        ]
-    except Exception as e:
-        return [{"error": f"An error occurred: {e}"}]
+    resp = tavily.search(query=query, domains=["arxiv.org"], max_results=max_results)
+    return [{"title": r["title"], "url": r["url"]} for r in resp.get("results", [])]
 
 
-@mcp.tool(annotations={"title": "Get Latest News"})
-def get_latest_news(topic: str) -> List[Dict]:
+# --- Tool: Summarize an ArXiv paper ---
+@mcp.tool(annotations={"title": "Summarize Paper"})
+def summarize_paper(paper_url: str) -> str:
     """
-    Finds the most recent news articles on a specific topic from the last week.
-
-    Args:
-        topic: The news topic to search for.
+    Returns a one-paragraph summary of the paper at the given URL.
     """
-    try:
-        response = tavily.search(query=topic, topic="news", time_range="week")
-        return [
-            {"title": r["title"], "url": r["url"], "content": r["content"]}
-            for r in response.get("results", [])
-        ]
-    except Exception as e:
-        return [{"error": f"An error occurred: {e}"}]
+    prompt = f"Summarize the key contributions of this ArXiv paper: {paper_url}"
+    return tavily.qna_search(query=prompt)
 
 
-@mcp.tool(annotations={"title": "Get Quick Answer"})
-def get_quick_answer(question: str) -> str:
-    """
-    Provides a direct, concise answer to a specific question.
-
-    Args:
-        question: The question you want a direct answer for.
-    """
-    try:
-        response = tavily.qna_search(query=question)
-        return response
-    except Exception as e:
-        return f"An error occurred: {e}"
+print("✅ Tools 'Search Arxiv' and 'Summarize Paper' registered.")
 
 
-print("✅ Tools 'web_search', 'get_latest_news', and 'get_quick_answer' registered.")
-
+# --- Prompt Template: Explore a topic thoroughly ---
 @mcp.prompt
-def generate_comprehensive_report_request(topic: str) -> str:
-    """Generates a prompt to create a comprehensive report on a topic."""
+def explore_topic_prompt(topic: str) -> str:
     return (
-        f"Please compile a report on '{topic}'. Follow these steps:\n"
-        f"1. First, use the 'get_quick_answer' tool to get a concise summary.\n"
-        f"2. Next, use the 'get_latest_news' tool to find recent developments.\n"
-        f"3. Finally, use the 'web_search' tool to gather broader context.\n"
-        f"Synthesize all this information into a final report."
+        f"I want to explore recent work on '{topic}'.\n"
+        f"1. Call the 'Search Arxiv' tool to find the 5 most recent papers.\n"
+        f"2. For each paper URL, call 'Summarize Paper' to extract its key contributions.\n"
+        f"3. Combine all summaries into an overview report."
     )
 
 
-print("✅ Prompt 'generate_comprehensive_report_request' registered.")
-
+print("✅ Prompt 'explore_topic_prompt' registered.")
 
 if __name__ == "__main__":
-    print("\n🚀 Starting AI Research Assistant Server...")
-    print("   Waiting for a client to connect via STDIO.")
+    print("\n🚀 Starting ArxivExplorer Server…")
     mcp.run(transport="http")

@@ -5,142 +5,114 @@ import pprint
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 
-# Adjust the URL if your server runs elsewhere
-SERVER_URL = "http://localhost:8000/mcp"
+# --- Configuration ---
+SERVER_URL = "http://localhost:8000/mcp"  # adjust if hosted elsewhere
 
 pp = pprint.PrettyPrinter(indent=2, width=100)
+
+
+def unwrap_tool_result(resp):
+    """
+    Given a CallToolResult, return the Python object you actually want to iterate:
+     - structured_content["result"] if present
+     - otherwise try to parse resp.content as Python literal
+     - otherwise return resp.content or resp itself
+    """
+    if hasattr(resp, "structured_content") and resp.structured_content:
+        return resp.structured_content.get("result", resp.structured_content)
+    if hasattr(resp, "content") and resp.content:
+        text = resp.content
+        try:
+            return ast.literal_eval(text)
+        except Exception:
+            return text
+    return resp
 
 
 async def main():
     transport = StreamableHttpTransport(url=SERVER_URL)
     client = Client(transport)
+
     print("\n🚀 Connecting to FastMCP server at:", SERVER_URL)
     async with client:
-        # Ping
+        # 1. Ping
         print("\n🔗 Testing server connectivity...")
         await client.ping()
         print("✅ Server is reachable!\n")
 
-        # List tools
+        # 2. List what's available
         print("🛠️  Available tools:")
         tools = await client.list_tools()
         pp.pprint(tools)
         print()
 
-        # List resources
         print("📚 Available resources:")
         resources = await client.list_resources()
         pp.pprint(resources)
         print()
 
-        # List prompts
         print("💬 Available prompts:")
         prompts = await client.list_prompts()
         pp.pprint(prompts)
         print()
 
-        # Test resource: research/daily_topics
-        print("\n📖 Fetching resource: resource://research/daily_topics")
+        # 3. Fetch our AI topics resource
+        print("\n📖 Fetching resource: resource://ai/arxiv_topics")
         try:
-            daily_topics = await client.read_resource(
-                "resource://research/daily_topics"
-            )
-            # For text/plain, the .text attribute contains the data
-            text = daily_topics[0].text
-            # Try to parse as list if possible
+            res = await client.read_resource("resource://ai/arxiv_topics")
+            text = res[0].text
             try:
                 topics = ast.literal_eval(text)
-                if isinstance(topics, list):
-                    print("Topics for today:")
-                    for idx, topic in enumerate(topics, 1):
-                        print(f"  {idx}. {topic}")
-                else:
-                    print("(Not a list, printing as text)")
             except Exception:
-                print("(Could not parse as list, printing as text)")
+                topics = [text]
+            print("Today's AI topics:")
+            for i, t in enumerate(topics, 1):
+                print(f"  {i}. {t}")
         except Exception as e:
             print(f"❌ Error fetching resource: {e}")
         print()
 
-        # Test tool: web_search
-        print("\U0001f50d Testing tool: web_search")
+        # 4. Search Arxiv for a topic
+        print("🔍 Testing tool: search_arxiv")
         try:
-            ws_result = await client.call_tool(
-                "web_search", {"query": "AI research", "max_results": 2}
+            raw = await client.call_tool(
+                "search_arxiv",
+                {"query": "Transformer interpretability", "max_results": 3},
             )
-            print("Results:")
-            # Print the structured content if available, else fallback
-            if (
-                hasattr(ws_result, "structured_content")
-                and ws_result.structured_content
-            ):
-                for idx, item in enumerate(
-                    ws_result.structured_content.get("result", []), 1
-                ):
-                    print(
-                        f"  {idx}. {item.get('title', '')}\n     URL: {item.get('url', '')}\n     Content: {item.get('content', '')}\n"
-                    )
-            elif hasattr(ws_result, "content") and ws_result.content:
-                print(ws_result.content)
-            else:
-                print(ws_result)
+            search_results = unwrap_tool_result(raw)
+            if not isinstance(search_results, list):
+                raise ValueError("Expected a list of papers")
+            for i, paper in enumerate(search_results, 1):
+                print(f"  {i}. {paper['title']}\n     {paper['url']}")
         except Exception as e:
-            print(f"\u274c Error calling web_search: {e}")
+            print(f"❌ Error calling search_arxiv: {e}")
+            search_results = []
         print()
 
-        # Test tool: get_latest_news
-        print("\U0001f4f0 Testing tool: get_latest_news")
-        try:
-            news_result = await client.call_tool("get_latest_news", {"topic": "AI"})
-            print("Results:")
-            # Print the structured content if available, else fallback
-            if (
-                hasattr(news_result, "structured_content")
-                and news_result.structured_content
-            ):
-                for idx, item in enumerate(
-                    news_result.structured_content.get("result", []), 1
-                ):
-                    print(
-                        f"  {idx}. {item.get('title', '')}\n     URL: {item.get('url', '')}\n     Content: {item.get('content', '')}\n"
-                    )
-            elif hasattr(news_result, "content") and news_result.content:
-                print(news_result.content)
-            else:
-                print(news_result)
-        except Exception as e:
-            print(f"\u274c Error calling get_latest_news: {e}")
-        print()
+        # 5. Summarize the first paper (if any)
+        if search_results:
+            first_url = search_results[0]["url"]
+            print("📝 Testing tool: summarize_paper")
+            try:
+                raw = await client.call_tool(
+                    "summarize_paper", {"paper_url": first_url}
+                )
+                summary = unwrap_tool_result(raw)
+                print("\nSummary of first paper:\n", summary)
+            except Exception as e:
+                print(f"❌ Error calling summarize_paper: {e}")
+            print()
 
-        # Test tool: get_quick_answer
-        print("\u26a1 Testing tool: get_quick_answer")
+        # 6. Generate the LLM prompt for a deep dive
+        print("🚀 Testing prompt: explore_topic_prompt")
         try:
-            answer_result = await client.call_tool(
-                "get_quick_answer", {"question": "What is quantum computing?"}
+            prompt_resp = await client.get_prompt(
+                "explore_topic_prompt", {"topic": "Transformer interpretability"}
             )
-            print("Answer:")
-            # Print the result attribute if available
-            if (
-                hasattr(answer_result, "structured_content")
-                and answer_result.structured_content
-            ):
-                print(answer_result.structured_content.get("result", answer_result))
-            elif hasattr(answer_result, "content") and answer_result.content:
-                print(answer_result.content)
-            else:
-                print(answer_result)
-        except Exception as e:
-            print(f"\u274c Error calling get_quick_answer: {e}")
-        print()
-
-        # Test prompt: generate_comprehensive_report_request
-        print("📝 Testing prompt: generate_comprehensive_report_request")
-        try:
-            prompt_result = await client.get_prompt(
-                "generate_comprehensive_report_request", {"topic": "AI in healthcare"}
-            )
-            print("Prompt output:")
-            pp.pprint(prompt_result.messages)
+            print("\nGenerated prompt:")
+            for msg in prompt_resp.messages:
+                # use attributes instead of indexing
+                print(f"{msg.role.upper()}: {msg.content}\n")
         except Exception as e:
             print(f"❌ Error calling prompt: {e}")
         print()
